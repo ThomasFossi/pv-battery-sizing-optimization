@@ -60,3 +60,84 @@ def test_energy_balance_scenarios():
   # 3. Physical Boundary Checks (Surplus and Deficit can never be negative)
   assert (df_model["surplus_kWh"] >= 0).all()
   assert (df_model["deficit_kWh"] >= 0).all()
+
+
+def test_negative_pv_generation_raises_value_error():
+    """Negative PV generation should be rejected."""
+
+    timestamps = pd.date_range(
+        start="2022-01-01",
+        periods=2,
+        freq="h"
+    )
+
+    df_pv = pd.DataFrame(
+        {"P": [1000.0, -500.0]},
+        index=timestamps
+    )
+
+    df_demand = pd.DataFrame(
+        {"demand_kWh": [0.5, 0.5]},
+        index=timestamps
+    )
+
+    # We expect the function to raise ValueError
+    with pytest.raises(ValueError):
+        validate_and_align_data(df_pv, df_demand)
+
+def test_duplicate_timestamps_raise_value_error():
+    """Duplicate timestamps should be rejected."""
+
+    timestamps = pd.to_datetime([
+        "2022-01-01 00:00",
+        "2022-01-01 00:00"
+    ])
+
+    df_pv = pd.DataFrame(
+        {"P": [1000.0, 1200.0]},
+        index=timestamps
+    )
+
+    df_demand = pd.DataFrame(
+        {"demand_kWh": [0.5, 0.6]},
+        index=timestamps
+    )
+
+    with pytest.raises(ValueError):
+        validate_and_align_data(df_pv, df_demand)
+
+def test_missing_pv_values_raise_value_error():
+    """Missing PV measurements should be rejected."""
+
+    timestamps = pd.date_range(
+        start="2022-01-01",
+        periods=2,
+        freq="h"
+    )
+
+    df_pv = pd.DataFrame(
+        {"P": [1000.0, float("nan")]},
+        index=timestamps
+    )
+
+    df_demand = pd.DataFrame(
+        {"demand_kWh": [0.5, 0.6]},
+        index=timestamps
+    )
+
+    with pytest.raises(ValueError):
+        validate_and_align_data(df_pv, df_demand)
+
+def test_energy_conversion_45_minutes():
+    """2000 W over 45 minutes should produce 1.5 kWh."""
+
+    power_w = 2000.0
+    time_delta_hours = 0.75
+
+    expected_energy_kwh = 1.5
+
+    calculated_energy_kwh = (
+        power_w / 1000 * time_delta_hours
+    )
+
+    assert calculated_energy_kwh == expected_energy_kwh
