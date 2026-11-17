@@ -23,15 +23,35 @@ def load_clean_pv_data(file_path: str | Path) -> pd.DataFrame:
 def validate_and_align_data(
     df_pv: pd.DataFrame, df_demand: pd.DataFrame
 ) -> pd.DataFrame:
-  """Confirms timeline overlap, matching lengths, and time index alignment
-
-  between PV generation and household demand, then computes hourly energy balances.
+  """Confirms timeline alignment, checks for missing/duplicate timestamps, 
+  validates data types, and ensures physical plausibility (no negative PV or demand) 
+  before computing hourly energy balances.
   """
-  # Ensure demand is indexed by timestamp
+  # Ensure demand is indexed by timestamp if passed as column
   if "timestamp" in df_demand.columns:
     df_demand = df_demand.set_index("timestamp")
 
-  # 1. Validation checks
+  # --- 1. Timestamp & Index Integrity Checks ---
+  if not df_pv.index.is_unique:
+    raise ValueError("Duplicate timestamps detected in PV dataset index.")
+  if not df_demand.index.is_unique:
+    raise ValueError("Duplicate timestamps detected in Demand dataset index.")
+
+  # Check for missing timestamps (gaps in hourly frequency)
+  # Assuming 1-hour frequency for both datasets
+  expected_pv_index = pd.date_range(start=df_pv.index.min(), end=df_pv.index.max(), freq="h")
+  if not df_pv.index.equals(expected_pv_index):
+    missing_pv = expected_pv_index.difference(df_pv.index)
+    if len(missing_pv) > 0:
+      raise ValueError(f"Missing timestamps detected in PV dataset: {len(missing_pv)} gaps found.")
+
+  expected_demand_index = pd.date_range(start=df_demand.index.min(), end=df_demand.index.max(), freq="h")
+  if not df_demand.index.equals(expected_demand_index):
+    missing_demand = expected_demand_index.difference(df_demand.index)
+    if len(missing_demand) > 0:
+      raise ValueError(f"Missing timestamps detected in Demand dataset: {len(missing_demand)} gaps found.")
+
+  # --- 2. Length & Alignment Checks ---
   assert len(df_pv) == len(
       df_demand
   ), f"Length mismatch: PV has {len(df_pv)} rows, Demand has {len(df_demand)} rows."
@@ -39,23 +59,44 @@ def validate_and_align_data(
       df_demand.index
   ), "Timestamps between PV data and demand profile do not align perfectly."
 
-  print("✓ Timeline length and timestamp alignment verified successfully.")
+  # --- 3. Data Type & Missing Value Checks ---
+  if df_pv["P"].isna().any():
+    raise ValueError("Missing (NaN) values detected in PV power column 'P'.")
+  if df_demand["demand_kWh"].isna().any():
+    raise ValueError("Missing (NaN) values detected in household demand column.")
 
-  # 2. Combine into a unified modeling DataFrame
+  if not pd.api.types.is_numeric_dtype(df_pv["P"]):
+    raise TypeError("PV power column 'P' contains non-numeric data types.")
+  if not pd.api.types.is_numeric_dtype(df_demand["demand_kWh"]):
+    raise TypeError("Household demand column contains non-numeric data types.")
+
+  # --- 4. Physical Plausibility Checks ---
+  if (df_pv["P"] < 0).any():
+    raise ValueError("Physical violation: Negative PV generation values detected.")
+  if (df_demand["demand_kWh"] < 0).any():
+    raise ValueError("Physical violation: Negative household demand values detected.")
+
+  print("✓ All timestamp, alignment, data type, and physical plausibility checks passed successfully.")
+
+  # --- 5. Compute Dynamic Time Deltas & Energy Balance ---
   df_model = pd.DataFrame(index=df_pv.index)
 
-  # Convert PV power from Watts (W) to kilowatt-hours (kWh) for 1-hour intervals
-  df_model["E_pv_kWh"] = df_pv["P"] / 1000.0
-  df_model["E_demand_kWh"] = df_demand["demand_kWh"]
+  # Calculate actual time interval (delta t) in hours between consecutive timestamps
+  time_deltas = (
+      df_pv.index.to_series().diff().dt.total_seconds() / 3600.0
+  )
+  # Backfill the first row's NaN delta and fallback to 1.0 if single-row
+  time_deltas = time_deltas.bfill().fillna(1.0)
 
-  # 3. Calculate hourly net energy, surplus, and deficit
-  # Net = Generation - Demand
+  # Energy (kWh) = Power (W) * Time (hours) / 1000 (W/kW)
+  df_model["E_pv_kWh"] = (df_pv["P"] * time_deltas) / 1000.0
+
+  # Scale demand energy by the actual time interval length
+  df_model["E_demand_kWh"] = df_demand["demand_kWh"] * time_deltas
+
+  # Net energy, surplus, and deficit calculations
   df_model["E_net_kWh"] = df_model["E_pv_kWh"] - df_model["E_demand_kWh"]
-
-  # Surplus: Energy available when generation exceeds demand (stored or exported)
   df_model["surplus_kWh"] = df_model["E_net_kWh"].clip(lower=0)
-
-  # Deficit: Energy needed when demand exceeds generation (drawn from battery or grid)
   df_model["deficit_kWh"] = (-df_model["E_net_kWh"]).clip(lower=0)
 
   return df_model
@@ -63,6 +104,7 @@ def validate_and_align_data(
 
 def calculate_aggregations(df_model: pd.DataFrame) -> dict:
   """Calculates total energy metrics aggregated across daily, monthly, and yearly intervals."""
+
   cols_to_sum = ["E_pv_kWh", "E_demand_kWh", "surplus_kWh", "deficit_kWh"]
 
   # Resample to daily, monthly ('ME' for month-end), and yearly ('YE' for year-end) sums
@@ -74,6 +116,7 @@ def calculate_aggregations(df_model: pd.DataFrame) -> dict:
 
 
 def save_energy_balance_results(
+    # Save hourly simulation and aggregated results to the specified output directory.
     df_model: pd.DataFrame, aggregations: dict, output_dir: str | Path = "../results"
 ) -> None:
   """Saves hourly simulation and aggregated results to the results/ directory."""
