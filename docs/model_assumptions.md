@@ -53,6 +53,13 @@ The demand profile is generated using an illustrative normalized 24-hour weight 
   * **Deficit ($E_{\text{deficit}}$):** $\max(0, -E_{\text{net}})$ — energy shortfall requiring battery discharge or grid supply.
 * **Aggregations:** Computes cumulative sums across daily, monthly (`ME`), and yearly (`YE`) horizons, saving outputs to the `results/` directory.
 
+### Time Interval Calculation (`src/energy_balance.py`)
+* **Dynamic Time Steps ($\Delta t$):** Rather than assuming a fixed hourly sampling frequency, the model calculates time intervals dynamically from differences between consecutive timestamps.
+* **Energy Scaling:** Calculated intervals are converted into hours and multiplied into both PV generation and household energy demand calculations.
+* **First Timestamp Assumption:** Because the initial timestamp has no preceding timestamp, its interval is set equal to the subsequent interval via backward filling (`bfill()`).
+* **Single-Timestamp Assumption:** If the dataset contains only a single timestamp and no sampling frequency can be inferred, the model defaults to a 1-hour interval (`1.0` hour).
+* **Applicability & Caveats:** These assumptions should be reviewed if datasets with irregular sampling frequencies or alternative timestamp conventions are introduced.
+
 ---
 
 ## 4. Model Verification & Automated Testing
