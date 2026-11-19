@@ -19,6 +19,26 @@ def load_clean_pv_data(file_path: str | Path) -> pd.DataFrame:
   df_pv = pd.read_csv(file_path, parse_dates=["time"], index_col="time")
   return df_pv
 
+# CAlculate time deltas function is defined to compute the time intervals between consecutive timestamps in hours. 
+# It handles the first timestamp by using the next available interval and defaults to 1 hour for a single-timestamp dataset. 
+# The function returns a pandas Series of time deltas.
+def calculate_time_deltas(index: pd.DatetimeIndex) -> pd.Series:
+    """
+    Calculate time intervals between consecutive timestamps in hours.
+
+    The first timestamp uses the next available interval.
+    For a single-timestamp dataset, a default of 1 hour is used.
+    """
+
+    time_deltas = (
+        index.to_series().diff().dt.total_seconds() / 3600.0
+    )
+
+    # Backfill the first row's NaN delta
+    time_deltas = time_deltas.bfill().fillna(1.0)
+
+    return time_deltas
+
 
 def validate_and_align_data(
     df_pv: pd.DataFrame, df_demand: pd.DataFrame
@@ -79,16 +99,13 @@ def validate_and_align_data(
   print("✓ All timestamp, alignment, data type, and physical plausibility checks passed successfully.")
 
   # --- 5. Compute Dynamic Time Deltas & Energy Balance ---
+
   df_model = pd.DataFrame(index=df_pv.index)
 
-  # Calculate actual time interval (delta t) in hours between consecutive timestamps
-  time_deltas = (
-      df_pv.index.to_series().diff().dt.total_seconds() / 3600.0
-  )
-  # Backfill the first row's NaN delta and fallback to 1.0 if single-row
-  time_deltas = time_deltas.bfill().fillna(1.0)
+  # Calculate actual time intervals in hours
+  time_deltas = calculate_time_deltas(df_pv.index)
 
-  # Energy (kWh) = Power (W) * Time (hours) / 1000 (W/kW)
+  # Energy (kWh) = Power (W) * Time (hours) / 1000
   df_model["E_pv_kWh"] = (df_pv["P"] * time_deltas) / 1000.0
 
   # Scale demand energy by the actual time interval length
