@@ -7,6 +7,7 @@ surplus, and deficit scenarios, as well as energy conservation laws.
 import pandas as pd
 import pytest
 from energy_balance import validate_and_align_data
+from energy_balance import calculate_time_deltas
 
 
 def test_energy_balance_scenarios():
@@ -141,3 +142,14 @@ def test_energy_conversion_45_minutes():
     )
 
     assert calculated_energy_kwh == expected_energy_kwh
+
+def test_calculate_time_deltas_45_minutes():
+    timestamps = pd.date_range(
+        start="2026-01-01 08:00",
+        periods=3,
+        freq="45min"
+    )
+
+    time_deltas = calculate_time_deltas(timestamps)
+
+    assert list(time_deltas) == [0.75, 0.75, 0.75]
