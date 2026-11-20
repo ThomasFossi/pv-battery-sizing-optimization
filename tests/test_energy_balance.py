@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from energy_balance import validate_and_align_data
 from energy_balance import calculate_time_deltas
+from battery_model import dispatch_battery
 
 
 def test_energy_balance_scenarios():
@@ -153,3 +154,15 @@ def test_calculate_time_deltas_45_minutes():
     time_deltas = calculate_time_deltas(timestamps)
 
     assert list(time_deltas) == [0.75, 0.75, 0.75]
+
+def test_calculate_time_deltas_single_timestamp():
+    timestamps = pd.date_range(
+        start="2026-01-01 08:00",
+        periods=1,
+        freq="h"
+    )
+
+    time_deltas = calculate_time_deltas(timestamps)
+
+    assert list(time_deltas) == [1.0]
+
