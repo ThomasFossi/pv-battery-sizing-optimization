@@ -1,7 +1,9 @@
+import pandas as pd
 import pytest
 from battery_model import calculate_battery_charging, check_battery_energy_balance, check_system_energy_balance
 from battery_model import calculate_battery_discharging, simulate_battery
 from battery_model import dispatch_battery
+from energy_balance import prepare_battery_simulation_inputs
 
 def test_battery_charging_capacity_limit():
     """Test that battery charging respects capacity limits."""
@@ -417,3 +419,69 @@ def test_simulate_battery_rejects_invalid_negative_max_discharge_power():
             max_charge_power_kw=1.0,
             max_discharge_power_kw=-1.0,  # Invalid negative max discharge power
         )
+
+
+def test_prepare_battery_simulation_inputs():
+    """Test conversion of energy-balance DataFrame into battery inputs."""
+
+    df_model = pd.DataFrame(
+        {
+            "E_pv_kWh": [0.45, 0.20],
+            "E_demand_kWh": [0.30, 0.35],
+            "time_delta_hours": [0.5, 0.5],
+        },
+        index=pd.to_datetime([
+            "2026-01-01 00:00:00",
+            "2026-01-01 00:30:00",
+        ]),
+    )
+
+    intervals = prepare_battery_simulation_inputs(df_model)
+
+    assert len(intervals) == 2
+
+    assert intervals[0]["timestamp"] == pd.Timestamp("2026-01-01 00:00:00")
+    assert intervals[0]["pv_energy_kwh"] == 0.45
+    assert intervals[0]["demand_energy_kwh"] == 0.30
+    assert intervals[0]["time_delta_hours"] == 0.5
+
+    assert intervals[1]["timestamp"] == pd.Timestamp("2026-01-01 00:30:00")
+
+def test_battery_simulation_integration():
+    """Integration test for the full battery simulation workflow."""
+
+    df_model = pd.DataFrame(
+        {
+            "E_pv_kWh": [1.0, 3.0, 0.20],
+            "E_demand_kWh": [0.50, 1.0, 1.5],
+            "time_delta_hours": [1.0, 1.0, 1.0],
+        },
+        index=pd.to_datetime([
+            "2026-01-01 06:00:00",
+            "2026-01-01 07:00:00",
+            "2026-01-01 08:00:00",
+        ]),
+    )
+
+    intervals = prepare_battery_simulation_inputs(df_model)
+
+    results = simulate_battery(
+        intervals=intervals,
+        initial_stored_energy_kwh=2.5,
+        battery_capacity_kwh=5.0,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        min_soc=0.20,
+        max_charge_power_kw=1.0,
+        max_discharge_power_kw=1.0,
+    )
+
+    assert len(results) == 3
+
+    # Check that energy is carried over correctly
+    assert results[2]["new_stored_energy_kwh"] == pytest.approx(
+    2.8723684211,
+    abs=1e-9
+    )
+    assert results[2]["grid_import_kwh"] == pytest.approx(0.3, abs=1e-9)
+    assert results[1]["grid_export_kwh"] == pytest.approx(1.0, abs=1e-9)
