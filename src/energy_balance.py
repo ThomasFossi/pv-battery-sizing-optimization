@@ -104,6 +104,7 @@ def validate_and_align_data(
 
   # Calculate actual time intervals in hours
   time_deltas = calculate_time_deltas(df_pv.index)
+  df_model["time_delta_hours"] = time_deltas
 
   # Energy (kWh) = Power (W) * Time (hours) / 1000
   df_model["E_pv_kWh"] = (df_pv["P"] * time_deltas) / 1000.0
@@ -146,6 +147,24 @@ def save_energy_balance_results(
   aggregations["yearly"].to_csv(out_dir / "yearly_energy_balance.csv")
 
   print(f"✓ All energy balance results successfully saved to: {out_dir.resolve()}")
+
+# Prepare battery simulation inputs function is defined to convert the energy balance DataFrame into a list of dictionaries, 
+# each representing an interval with relevant energy metrics. This prepares the data for battery simulation by extracting 
+# PV energy, demand energy, and time delta for each timestamp.
+def prepare_battery_simulation_inputs(
+    df_model: pd.DataFrame,
+) -> list[dict[str, float]]:
+    """Prepares the necessary inputs for battery simulation based on the energy balance model."""
+    intervals = []
+    for timestamp, row in df_model.iterrows():
+        interval = {
+            "timestamp": timestamp,
+            "pv_energy_kwh": row["E_pv_kWh"],
+            "demand_energy_kwh": row["E_demand_kWh"],
+            "time_delta_hours": row["time_delta_hours"],
+        }
+        intervals.append(interval)
+    return intervals
 
 
 if __name__ == "__main__":
