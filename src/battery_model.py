@@ -142,7 +142,7 @@ def calculate_battery_discharging(
         "remaining_deficit_kwh": remaining_deficit_kwh,
     }
 
-
+# Dispatch battery based on net PV surplus or demand deficit
 def dispatch_battery(
     pv_energy_kwh: float,
     demand_energy_kwh: float,
@@ -256,7 +256,7 @@ def dispatch_battery(
     )
 
     return results
-
+# Check energy balance of the battery system
 def check_battery_energy_balance(
     initial_stored_energy_kwh: float,
     energy_stored_kwh: float,
@@ -274,7 +274,7 @@ def check_battery_energy_balance(
 
     return abs(energy_in - energy_out) < 1e-9
 
-
+# Check energy balance across the entire household system, including PV, demand, grid, and battery.
 def check_system_energy_balance(
     pv_energy_kwh: float,
     demand_energy_kwh: float,
@@ -316,7 +316,7 @@ def check_system_energy_balance(
     return abs(energy_in - energy_out) <= tolerance
 
 
-
+# Simulate battery operation over a series of intervals 
 def simulate_battery(
     intervals: list[dict[str, float]],
     initial_stored_energy_kwh: float,
