@@ -3,6 +3,7 @@ import pytest
 
 from lifetime_simulation import apply_battery_year_transition
 from lifetime_simulation import transfer_battery_energy
+from lifetime_simulation import calculate_monthly_degradation
 
 def test_battery_capacity_decreases_with_annual_degradation():
     new_capacity_kwh, new_stored_energy_kwh, capacity_fade_loss_kwh = (
@@ -11,7 +12,6 @@ def test_battery_capacity_decreases_with_annual_degradation():
             current_stored_energy_kwh=2.5,
             annual_degradation=0.02,
             min_soc=0.20,
-            replacement=False,
         )
     )
 
@@ -78,3 +78,53 @@ def test_battery_replacement_energy_balance():
     )
 
     assert energy_in == pytest.approx(energy_out)
+
+
+def test_battery_soc_is_preserved_after_degradation():
+    initial_capacity_kwh = 5.0
+    initial_stored_energy_kwh = 2.5
+
+    new_capacity, new_stored_energy, _ = (
+        apply_battery_year_transition(
+            current_capacity_kwh=initial_capacity_kwh,
+            current_stored_energy_kwh=initial_stored_energy_kwh,
+            annual_degradation=0.02,
+            min_soc=0.20,
+        )
+    )
+
+    initial_soc = initial_stored_energy_kwh / initial_capacity_kwh
+    new_soc = new_stored_energy / new_capacity
+
+    assert new_soc == pytest.approx(initial_soc)
+
+
+def test_battery_transition_rejects_energy_below_minimum_soc():
+    with pytest.raises(ValueError):
+        apply_battery_year_transition(
+            current_capacity_kwh=5.0,
+            current_stored_energy_kwh=0.5,
+            annual_degradation=0.02,
+            min_soc=0.20,
+        )
+
+
+def test_monthly_battery_degradation():
+    monthly_rate = calculate_monthly_degradation(0.02)
+
+    assert monthly_rate == pytest.approx(0.001682, abs=0.000001)
+
+
+def test_twelve_months_equal_annual_degradation():
+    annual_rate = 0.02
+
+    monthly_rate = calculate_monthly_degradation(annual_rate)
+
+    remaining_capacity = (1 - monthly_rate) ** 12
+
+    assert remaining_capacity == pytest.approx(1 - annual_rate)
+
+
+def test_monthly_degradation_rejects_invalid_rate():
+    with pytest.raises(ValueError):
+        calculate_monthly_degradation(1.0)
