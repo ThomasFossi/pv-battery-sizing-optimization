@@ -1,5 +1,5 @@
 
-
+"""Battery lifetime simulation functions."""
 
 
 def apply_battery_year_transition(
@@ -152,3 +152,30 @@ def calculate_monthly_degradation(annual_degradation):
 
     return monthly_degradation
 
+
+def calculate_degraded_pv_energy(
+    initial_pv_energy_kwh,
+    monthly_degradation,
+    months_elapsed,
+):
+    """Calculate PV energy generation capacity after cumulative monthly degradation."""
+
+    if initial_pv_energy_kwh < 0:
+        raise ValueError("Initial PV energy cannot be negative.")
+
+    if not 0 <= monthly_degradation < 1:
+        raise ValueError(
+            "Monthly degradation must be between 0 and 1."
+        )
+
+    if not isinstance(months_elapsed, int) or months_elapsed < 0:
+        raise ValueError(
+            "Months elapsed must be a non-negative integer."
+        )
+
+    degraded_energy_kwh = (
+        initial_pv_energy_kwh
+        * (1 - monthly_degradation) ** months_elapsed
+    )
+
+    return degraded_energy_kwh
