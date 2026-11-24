@@ -1,13 +1,15 @@
 
 
 
+
 def apply_battery_year_transition(
     current_capacity_kwh,
     current_stored_energy_kwh,
     annual_degradation,
     min_soc,
-    replacement=False,
 ):
+    """Apply one year of relative battery capacity degradation."""
+
     if not 0 <= annual_degradation < 1:
         raise ValueError("Annual degradation must be between 0 and 1.")
 
@@ -17,43 +19,35 @@ def apply_battery_year_transition(
     if current_capacity_kwh <= 0:
         raise ValueError("Battery capacity must be positive.")
 
-    if not 0 <= current_stored_energy_kwh <= current_capacity_kwh:
-        raise ValueError("Stored energy must be between zero and battery capacity.")
+    minimum_stored_energy_kwh = current_capacity_kwh * min_soc
 
-    if replacement:
-        new_capacity_kwh = current_capacity_kwh / (
-            1 - annual_degradation
+    if not (
+        minimum_stored_energy_kwh
+        <= current_stored_energy_kwh
+        <= current_capacity_kwh
+    ):
+        raise ValueError(
+            "Stored energy must be within the permitted SOC limits."
         )
 
-        new_stored_energy_kwh = current_stored_energy_kwh
-        capacity_fade_loss_kwh = 0.0
+    new_capacity_kwh = (
+        current_capacity_kwh * (1 - annual_degradation)
+    )
 
-    else:
-        new_capacity_kwh = current_capacity_kwh * (
-            1 - annual_degradation
-        )
+    new_stored_energy_kwh = (
+        current_stored_energy_kwh * (1 - annual_degradation)
+    )
 
-        new_stored_energy_kwh = current_stored_energy_kwh * (
-            1 - annual_degradation
-        )
-
-        capacity_fade_loss_kwh = (
-            current_stored_energy_kwh - new_stored_energy_kwh
-        )
-
-    minimum_stored_energy_kwh = new_capacity_kwh * min_soc
-
-    if new_stored_energy_kwh < minimum_stored_energy_kwh:
-        capacity_fade_loss_kwh += (
-            minimum_stored_energy_kwh - new_stored_energy_kwh
-        )
-        new_stored_energy_kwh = minimum_stored_energy_kwh
+    capacity_fade_loss_kwh = (
+        current_stored_energy_kwh - new_stored_energy_kwh
+    )
 
     return (
         new_capacity_kwh,
         new_stored_energy_kwh,
         capacity_fade_loss_kwh,
     )
+
 
 
 def transfer_battery_energy(
@@ -142,3 +136,19 @@ def transfer_battery_energy(
         "grid_top_up_charge_loss_kwh": grid_top_up_charge_loss,
         "new_stored_energy_kwh": new_stored_energy,
     }
+
+
+def calculate_monthly_degradation(annual_degradation):
+    """Convert an annual degradation rate into an equivalent monthly rate."""
+
+    if not 0 <= annual_degradation < 1:
+        raise ValueError(
+            "Annual degradation must be between 0 and 1."
+        )
+
+    monthly_degradation = 1 - (
+        1 - annual_degradation
+    ) ** (1 / 12)
+
+    return monthly_degradation
+
