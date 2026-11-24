@@ -4,6 +4,7 @@ import pytest
 from lifetime_simulation import apply_battery_year_transition
 from lifetime_simulation import transfer_battery_energy
 from lifetime_simulation import calculate_monthly_degradation
+from lifetime_simulation import calculate_degraded_pv_energy
 
 def test_battery_capacity_decreases_with_annual_degradation():
     new_capacity_kwh, new_stored_energy_kwh, capacity_fade_loss_kwh = (
@@ -128,3 +129,44 @@ def test_twelve_months_equal_annual_degradation():
 def test_monthly_degradation_rejects_invalid_rate():
     with pytest.raises(ValueError):
         calculate_monthly_degradation(1.0)
+
+
+def test_pv_energy_unchanged_at_zero_months():
+    result = calculate_degraded_pv_energy(
+        initial_pv_energy_kwh=1.0,
+        monthly_degradation=0.0002087,
+        months_elapsed=0,
+    )
+
+    assert result == pytest.approx(1.0)
+
+
+def test_pv_energy_after_twelve_months():
+    monthly_rate = calculate_monthly_degradation(0.0025)
+
+    result = calculate_degraded_pv_energy(
+        initial_pv_energy_kwh=1.0,
+        monthly_degradation=monthly_rate,
+        months_elapsed=12,
+    )
+
+    assert result == pytest.approx(0.9975)
+
+
+def test_pv_energy_decreases_over_time():
+    monthly_rate = calculate_monthly_degradation(0.0025)
+
+    energy_after_12_months = calculate_degraded_pv_energy(
+        1.0, monthly_rate, 12
+    )
+
+    energy_after_24_months = calculate_degraded_pv_energy(
+        1.0, monthly_rate, 24
+    )
+
+    assert energy_after_24_months < energy_after_12_months
+
+
+def test_pv_degradation_rejects_negative_energy():
+    with pytest.raises(ValueError):
+        calculate_degraded_pv_energy(-1.0, 0.001, 12)
