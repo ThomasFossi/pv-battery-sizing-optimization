@@ -5,6 +5,7 @@ from lifetime_simulation import apply_battery_year_transition
 from lifetime_simulation import transfer_battery_energy
 from lifetime_simulation import calculate_monthly_degradation
 from lifetime_simulation import calculate_degraded_pv_energy
+from lifetime_simulation import apply_battery_month_transition
 
 def test_battery_capacity_decreases_with_annual_degradation():
     new_capacity_kwh, new_stored_energy_kwh, capacity_fade_loss_kwh = (
@@ -170,3 +171,81 @@ def test_pv_energy_decreases_over_time():
 def test_pv_degradation_rejects_negative_energy():
     with pytest.raises(ValueError):
         calculate_degraded_pv_energy(-1.0, 0.001, 12)
+
+
+def test_battery_capacity_decreases_with_monthly_degradation():
+    new_capacity, new_stored_energy, fade_loss = (
+        apply_battery_month_transition(
+            current_capacity_kwh=5.0,
+            current_stored_energy_kwh=2.5,
+            monthly_degradation=calculate_monthly_degradation(0.02),
+            min_soc=0.20,
+        )
+    )
+
+    assert new_capacity == pytest.approx(4.99159, abs=0.00001)
+    assert new_stored_energy == pytest.approx(2.49580, abs=0.00001)
+    assert fade_loss == pytest.approx(0.00421, abs=0.00001)
+
+
+def test_battery_soc_is_preserved_after_monthly_degradation():
+    initial_capacity = 5.0
+    initial_stored_energy = 2.5
+
+    new_capacity, new_stored_energy, _ = (
+        apply_battery_month_transition(
+            current_capacity_kwh=initial_capacity,
+            current_stored_energy_kwh=initial_stored_energy,
+            monthly_degradation=calculate_monthly_degradation(0.02),
+            min_soc=0.20,
+        )
+    )
+
+    initial_soc = initial_stored_energy / initial_capacity
+    new_soc = new_stored_energy / new_capacity
+
+    assert new_soc == pytest.approx(initial_soc)
+
+
+def test_monthly_battery_transition_with_zero_degradation():
+    result = apply_battery_month_transition(
+        current_capacity_kwh=5.0,
+        current_stored_energy_kwh=2.5,
+        monthly_degradation=0.0,
+        min_soc=0.20,
+    )
+
+    assert result[0] == pytest.approx(5.0)
+    assert result[1] == pytest.approx(2.5)
+    assert result[2] == pytest.approx(0.0)
+
+
+def test_monthly_battery_transition_rejects_invalid_degradation():
+    for invalid_rate in [-0.01, 1.0]:
+        with pytest.raises(ValueError):
+            apply_battery_month_transition(
+                current_capacity_kwh=5.0,
+                current_stored_energy_kwh=2.5,
+                monthly_degradation=invalid_rate,
+                min_soc=0.20,
+            )
+
+
+def test_monthly_battery_transition_rejects_energy_below_minimum_soc():
+    with pytest.raises(ValueError):
+        apply_battery_month_transition(
+            current_capacity_kwh=5.0,
+            current_stored_energy_kwh=0.5,
+            monthly_degradation=0.001,
+            min_soc=0.20,
+        )
+
+
+def test_monthly_battery_transition_rejects_energy_above_capacity():
+    with pytest.raises(ValueError):
+        apply_battery_month_transition(
+            current_capacity_kwh=5.0,
+            current_stored_energy_kwh=5.1,
+            monthly_degradation=0.001,
+            min_soc=0.20,
+        )
