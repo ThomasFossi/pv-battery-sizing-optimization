@@ -179,3 +179,52 @@ def calculate_degraded_pv_energy(
     )
 
     return degraded_energy_kwh
+
+
+def apply_battery_month_transition(
+    current_capacity_kwh,
+    current_stored_energy_kwh,
+    monthly_degradation,
+    min_soc,
+):
+    """Apply one month of relative battery capacity degradation."""
+
+    if not 0 <= monthly_degradation < 1:
+        raise ValueError(
+            "Monthly degradation must be between 0 and 1."
+        )
+
+    if not 0 <= min_soc < 1:
+        raise ValueError("Minimum SOC must be between 0 and 1.")
+
+    if current_capacity_kwh <= 0:
+        raise ValueError("Battery capacity must be positive.")
+
+    minimum_stored_energy_kwh = current_capacity_kwh * min_soc
+
+    if not (
+        minimum_stored_energy_kwh
+        <= current_stored_energy_kwh
+        <= current_capacity_kwh
+    ):
+        raise ValueError(
+            "Stored energy must be within the permitted SOC limits."
+        )
+
+    new_capacity_kwh = (
+        current_capacity_kwh * (1 - monthly_degradation)
+    )
+
+    new_stored_energy_kwh = (
+        current_stored_energy_kwh * (1 - monthly_degradation)
+    )
+
+    capacity_fade_loss_kwh = (
+        current_stored_energy_kwh - new_stored_energy_kwh
+    )
+
+    return (
+        new_capacity_kwh,
+        new_stored_energy_kwh,
+        capacity_fade_loss_kwh,
+    )
