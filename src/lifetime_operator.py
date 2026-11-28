@@ -3,7 +3,11 @@
 import pandas as pd
 
 from demand_model import create_household_demand
-from energy_balance import validate_and_align_data
+from energy_balance import (
+    validate_and_align_data,
+    prepare_battery_simulation_inputs,
+)
+from battery_model import simulate_battery
 
 
 def prepare_lifetime_monthly_data(
@@ -76,3 +80,69 @@ def prepare_lifetime_monthly_data(
         raise ValueError("One or more simulation months are empty.")
 
     return df_balance
+
+
+def simulate_monthly_battery_dispatch(
+    df_month: pd.DataFrame,
+    initial_stored_energy_kwh: float,
+    battery_capacity_kwh: float,
+    charge_efficiency: float,
+    discharge_efficiency: float,
+    min_soc: float,
+    max_charge_power_kw: float | None = 1.0,
+    max_discharge_power_kw: float | None = 1.0,
+) -> pd.DataFrame:
+    """Simulate battery dispatch over one lifetime simulation month."""
+
+    required_columns = [
+        "E_pv_kWh",
+        "E_pv_degraded_kWh",
+        "E_demand_kWh",
+        "time_delta_hours",
+        "simulation_month",
+    ]
+
+    missing_columns = [
+        column
+        for column in required_columns
+        if column not in df_month.columns
+    ]
+
+    if missing_columns:
+        raise ValueError(
+            f"Missing required columns: {missing_columns}"
+        )
+
+    if df_month.empty:
+        raise ValueError("Monthly dataset cannot be empty.")
+
+    if df_month["simulation_month"].nunique() != 1:
+        raise ValueError(
+            "Dataset must contain exactly one simulation month."
+        )
+
+    # Create a temporary copy for battery dispatch.
+    df_dispatch = df_month.copy()
+
+    # Use degraded PV generation instead of original PV generation.
+    df_dispatch["E_pv_kWh"] = df_dispatch["E_pv_degraded_kWh"]
+
+    # Convert the monthly dataframe into battery input intervals.
+    intervals = prepare_battery_simulation_inputs(df_dispatch)
+
+    # Simulate battery operation sequentially.
+    results = simulate_battery(
+        intervals=intervals,
+        initial_stored_energy_kwh=initial_stored_energy_kwh,
+        battery_capacity_kwh=battery_capacity_kwh,
+        charge_efficiency=charge_efficiency,
+        discharge_efficiency=discharge_efficiency,
+        min_soc=min_soc,
+        max_charge_power_kw=max_charge_power_kw,
+        max_discharge_power_kw=max_discharge_power_kw,
+    )
+
+    # Return hourly results indexed by timestamp.
+    df_hourly = pd.DataFrame(results).set_index("timestamp")
+
+    return df_hourly
