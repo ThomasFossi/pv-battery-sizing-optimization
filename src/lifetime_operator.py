@@ -1,6 +1,14 @@
 """Orchestration of the complete PV-battery lifetime simulation."""
 
 import pandas as pd
+from dataclasses import dataclass
+
+from lifetime_simulation import (
+    apply_battery_month_transition,
+    calculate_monthly_degradation,
+    calculate_degraded_pv_energy,
+    transfer_battery_energy,
+)
 
 from demand_model import create_household_demand
 from energy_balance import (
@@ -9,6 +17,13 @@ from energy_balance import (
 )
 from battery_model import simulate_battery
 
+@dataclass
+class LifetimeSimulationOutput:
+    """Results of a complete PV-battery lifetime simulation."""
+
+    df_hourly: pd.DataFrame
+    df_monthly: pd.DataFrame
+    summary: dict[str, float]
 
 def prepare_lifetime_monthly_data(
     df_pv: pd.DataFrame,
@@ -146,3 +161,21 @@ def simulate_monthly_battery_dispatch(
     df_hourly = pd.DataFrame(results).set_index("timestamp")
 
     return df_hourly
+
+def run_lifetime_simulation(
+    df_pv: pd.DataFrame,
+    daily_demand_kwh: float = 8.0,
+    battery_capacity_kwh: float = 5.0,
+    initial_stored_energy_kwh: float = 2.5,
+    charge_efficiency: float = 0.95,
+    discharge_efficiency: float = 0.95,
+    min_soc: float = 0.20,
+    max_charge_power_kw: float | None = 1.0,
+    max_discharge_power_kw: float | None = 1.0,
+    annual_battery_degradation: float = 0.02,
+    annual_pv_degradation: float = 0.0025,
+    replacement_month: int = 169,
+    simulation_months: int = 240,
+) -> LifetimeSimulationOutput:
+    """Run a complete monthly PV-battery lifetime simulation."""
+    pass
