@@ -178,4 +178,268 @@ def run_lifetime_simulation(
     simulation_months: int = 240,
 ) -> LifetimeSimulationOutput:
     """Run a complete monthly PV-battery lifetime simulation."""
-    pass
+    
+    # Validate simulation horizon.
+    if (
+        not isinstance(simulation_months, int)
+        or isinstance(simulation_months, bool)
+        or simulation_months <= 0
+    ):
+        raise ValueError("Simulation months must be a positive integer.")
+
+    if (
+        not isinstance(replacement_month, int)
+        or isinstance(replacement_month, bool)
+        or replacement_month <= 0
+    ):
+        raise ValueError("Replacement month must be a positive integer.")
+
+    if battery_capacity_kwh <= 0:
+        raise ValueError("Battery capacity must be positive.")
+
+    if not 0 <= min_soc < 1:
+        raise ValueError("Minimum SOC must be between 0 and 1.")
+
+    if not (
+        battery_capacity_kwh * min_soc
+        <= initial_stored_energy_kwh
+        <= battery_capacity_kwh
+    ):
+        raise ValueError(
+            "Initial stored energy must be within the permitted SOC limits."
+        )
+
+    # Calculate equivalent monthly degradation rates.
+    monthly_battery_degradation = calculate_monthly_degradation(
+        annual_battery_degradation
+    )
+
+    monthly_pv_degradation = calculate_monthly_degradation(
+        annual_pv_degradation
+    )
+
+    # Prepare the complete hourly energy balance.
+    df_balance = prepare_lifetime_monthly_data(
+        df_pv=df_pv,
+        daily_demand_kwh=daily_demand_kwh,
+        simulation_months=simulation_months,
+    )
+
+    # Apply PV degradation using elapsed months.
+    pv_degradation_factors = {
+        month: calculate_degraded_pv_energy(
+            initial_pv_energy_kwh=1.0,
+            monthly_degradation=monthly_pv_degradation,
+            months_elapsed=month - 1,
+        )
+        for month in range(1, simulation_months + 1)
+    }
+
+    df_balance["pv_degradation_factor"] = (
+        df_balance["simulation_month"].map(
+            pv_degradation_factors
+        )
+    )
+
+    df_balance["E_pv_degraded_kWh"] = (
+        df_balance["E_pv_kWh"]
+        * df_balance["pv_degradation_factor"]
+    )
+
+    # Initialize battery state.
+    current_battery_capacity_kwh = battery_capacity_kwh
+    current_stored_energy_kwh = initial_stored_energy_kwh
+    battery_age_months = 0
+
+    hourly_results = []
+    monthly_results = []
+
+    # Process each month chronologically.
+    for month, df_month in df_balance.groupby(
+        "simulation_month",
+        sort=True,
+    ):
+
+        # Initialize monthly accounting fields.
+        capacity_fade_loss_kwh = 0.0
+        stored_energy_degradation_loss_kwh = 0.0
+        replacement_transfer_kwh = 0.0
+        replacement_grid_top_up_kwh = 0.0
+        battery_replaced = False
+
+        # Apply battery degradation before dispatch,
+        # except before the first month.
+        if month > 1:
+            previous_capacity_kwh = current_battery_capacity_kwh
+            previous_stored_energy_kwh = current_stored_energy_kwh
+
+            (
+                current_battery_capacity_kwh,
+                current_stored_energy_kwh,
+                stored_energy_degradation_loss_kwh,
+            ) = apply_battery_month_transition(
+                current_capacity_kwh=current_battery_capacity_kwh,
+                current_stored_energy_kwh=current_stored_energy_kwh,
+                monthly_degradation=monthly_battery_degradation,
+                min_soc=min_soc,
+            )
+
+            capacity_fade_loss_kwh = (
+                previous_capacity_kwh
+                - current_battery_capacity_kwh
+            )
+
+            battery_age_months += 1
+
+        # Replace the battery before dispatch in the specified month.
+        if month == replacement_month:
+            replacement = transfer_battery_energy(
+                old_capacity_kwh=current_battery_capacity_kwh,
+                old_stored_energy_kwh=current_stored_energy_kwh,
+                new_capacity_kwh=battery_capacity_kwh,
+                min_soc=min_soc,
+                old_discharge_efficiency=discharge_efficiency,
+                new_charge_efficiency=charge_efficiency,
+            )
+
+            replacement_transfer_kwh = (
+                replacement["transferred_energy_kwh"]
+            )
+
+            replacement_grid_top_up_kwh = (
+                replacement["grid_top_up_input_kwh"]
+            )
+
+            current_battery_capacity_kwh = battery_capacity_kwh
+            current_stored_energy_kwh = (
+                replacement["new_stored_energy_kwh"]
+            )
+
+            battery_age_months = 0
+            battery_replaced = True
+
+        # Record the battery state at the beginning of dispatch.
+        initial_monthly_stored_energy_kwh = (
+            current_stored_energy_kwh
+        )
+
+        # Dispatch the battery over the month's hourly intervals.
+        df_hourly_month = simulate_monthly_battery_dispatch(
+            df_month=df_month,
+            initial_stored_energy_kwh=current_stored_energy_kwh,
+            battery_capacity_kwh=current_battery_capacity_kwh,
+            charge_efficiency=charge_efficiency,
+            discharge_efficiency=discharge_efficiency,
+            min_soc=min_soc,
+            max_charge_power_kw=max_charge_power_kw,
+            max_discharge_power_kw=max_discharge_power_kw,
+        )
+
+        # Add lifetime metadata to the hourly results.
+        df_hourly_month["simulation_month"] = month
+        df_hourly_month["battery_age_months"] = battery_age_months
+        df_hourly_month["battery_capacity_kwh"] = (
+            current_battery_capacity_kwh
+        )
+        df_hourly_month["pv_degradation_factor"] = (
+            pv_degradation_factors[month]
+        )
+
+        # Carry final stored energy into the next month.
+        current_stored_energy_kwh = (
+            df_hourly_month["new_stored_energy_kwh"].iloc[-1]
+        )
+
+        # Record monthly results.
+        monthly_results.append({
+            "month": month,
+            "pv_degradation_months": month - 1,
+            "battery_age_months": battery_age_months,
+            "battery_capacity_kwh": current_battery_capacity_kwh,
+            "initial_stored_energy_kwh": (
+                initial_monthly_stored_energy_kwh
+            ),
+            "final_stored_energy_kwh": current_stored_energy_kwh,
+            "pv_energy_kwh": df_hourly_month[
+                "pv_energy_kwh"
+            ].sum(),
+            "demand_energy_kwh": df_hourly_month[
+                "demand_energy_kwh"
+            ].sum(),
+            "grid_import_kwh": df_hourly_month[
+                "grid_import_kwh"
+            ].sum(),
+            "grid_export_kwh": df_hourly_month[
+                "grid_export_kwh"
+            ].sum(),
+            "capacity_fade_loss_kwh": capacity_fade_loss_kwh,
+            "stored_energy_degradation_loss_kwh": (
+                stored_energy_degradation_loss_kwh
+            ),
+            "battery_replaced": battery_replaced,
+            "replacement_transfer_kwh": replacement_transfer_kwh,
+            "replacement_grid_top_up_kwh": (
+                replacement_grid_top_up_kwh
+            ),
+        })
+
+        hourly_results.append(df_hourly_month)
+
+    # Combine all hourly and monthly results.
+    df_hourly = pd.concat(hourly_results)
+    df_monthly = pd.DataFrame(monthly_results).set_index("month")
+
+    # Calculate overall performance metrics.
+    total_dispatch_grid_import_kwh = (
+        df_monthly["grid_import_kwh"].sum()
+    )
+
+    total_replacement_grid_top_up_kwh = (
+        df_monthly["replacement_grid_top_up_kwh"].sum()
+    )
+
+    summary = {
+        "simulation_months": float(simulation_months),
+        "total_pv_energy_kwh": df_monthly["pv_energy_kwh"].sum(),
+        "total_demand_energy_kwh": df_monthly[
+            "demand_energy_kwh"
+        ].sum(),
+        "total_grid_import_kwh": (
+            total_dispatch_grid_import_kwh
+            + total_replacement_grid_top_up_kwh
+        ),
+        "total_dispatch_grid_import_kwh": (
+            total_dispatch_grid_import_kwh
+        ),
+        "total_replacement_grid_top_up_kwh": (
+            total_replacement_grid_top_up_kwh
+        ),
+        "total_grid_export_kwh": df_monthly[
+            "grid_export_kwh"
+        ].sum(),
+        "total_charge_input_kwh": df_hourly[
+            "charge_input_kwh"
+        ].sum(),
+        "total_energy_stored_kwh": df_hourly[
+            "energy_stored_kwh"
+        ].sum(),
+        "total_discharge_output_kwh": df_hourly[
+            "discharge_output_kwh"
+        ].sum(),
+        "total_energy_removed_kwh": df_hourly[
+            "energy_removed_kwh"
+        ].sum(),
+        "initial_battery_capacity_kwh": battery_capacity_kwh,
+        "final_battery_capacity_kwh": current_battery_capacity_kwh,
+        "initial_stored_energy_kwh": initial_stored_energy_kwh,
+        "final_stored_energy_kwh": current_stored_energy_kwh,
+        "battery_replacement_count": float(
+            df_monthly["battery_replaced"].sum()
+        ),
+    }
+
+    return LifetimeSimulationOutput(
+        df_hourly=df_hourly,
+        df_monthly=df_monthly,
+        summary=summary,
+    )
